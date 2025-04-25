@@ -1,0 +1,210 @@
+---
+- name: deploy hadoop framework
+  hosts: noble
+  become: true
+  remote_user: hadoop
+  tasks:
+  - name: check whoami
+    ansible.builtin.shell:
+      cmd: whoami
+  - name: check whoami
+    ansible.builtin.shell:
+      cmd: whoami
+    become: true
+    become_user: hadoop
+  - name: perform apt update and apt upgrade
+    ansible.builtin.apt:
+      upgrade: yes
+      update_cache: yes
+  - name: install required packages
+    ansible.builtin.apt:
+      pkg:
+        - openssh-server
+        - openssh-client
+        - build-essential
+        - openjdk-11-jdk-headless
+      state: latest
+      update_cache: true
+  - name: download latest hadoop.tar.gz
+    ansible.builtin.get_url:
+      url:  https://downloads.apache.org/hadoop/core/hadoop-3.4.1/hadoop-3.4.1.tar.gz
+      dest: /home/mndrio/hadoop.tar.gz
+      mode: '660'
+  - name: create /opt/hadoop directory
+    ansible.builtin.file:
+      path: /opt/hadoop
+      state: directory
+      recurse: yes
+      owner: hadoop
+      group: hadoop
+  - name: extract hadoop.tar.gz into /opt/hadoop
+    ansible.builtin.unarchive:
+      src: /home/mndrio/hadoop.tar.gz
+      dest: /opt/hadoop
+      remote_src: true
+      extra_opts: ['--strip-components=1', '--show-stored-names']
+  - name: download latest spark.tar.gz
+    ansible.builtin.get_url:
+      url:  https://dlcdn.apache.org/spark/spark-3.5.5/spark-3.5.5-bin-hadoop3.tgz
+      dest: /home/mndrio/spark.tar.gz
+      mode: '660'
+  - name: create /opt/spark directory
+    ansible.builtin.file:
+      path: /opt/spark
+      state: directory
+      recurse: yes
+      owner: hadoop
+      group: hadoop
+  - name: extract spark.tar.gz into /opt/spark
+    ansible.builtin.unarchive:
+      src: /home/mndrio/spark.tar.gz
+      dest: /opt/spark
+      remote_src: true
+      extra_opts: ['--strip-components=1', '--show-stored-names']
+  - name: create /opt/hdfs directory
+    ansible.builtin.file:
+      path: /opt/hdfs
+      state: directory
+      recurse: yes
+      #owner: hadoop
+      #group: hadoop
+  - name: create /opt/hdfs/datanode directory
+    ansible.builtin.file:
+      path: /opt/hdfs/datanode
+      state: directory
+      recurse: yes
+      owner: hadoop
+      group: hadoop
+  - name: create /opt/hdfs/namenode directory
+    ansible.builtin.file:
+      path: /opt/hdfs/namenode
+      state: directory
+      recurse: yes
+      owner: hadoop
+      group: hadoop
+  - name: add JAVA_HOME to hadoop_env.sh
+    ansible.builtin.lineinfile: 
+      path: /opt/hadoop/etc/hadoop/hadoop-env.sh
+      regexp: '^# export JAVA_HOME=$'
+      line: 'export JAVA_HOME=$(readlink -f /usr/bin/java | sed "s:/bin/java::")'
+      backrefs: yes
+  - name: add HADOOP_HOME to hadoop_env.sh
+    ansible.builtin.lineinfile:
+      path: /opt/hadoop/etc/hadoop/hadoop-env.sh
+      regexp: '^# export HADOOP_HOME=$'
+      line: 'export HADOOP_HOME=/opt/hadoop'
+      backrefs: yes
+  - name: add HADOOP_CONF_DIR to hadoop_env.sh
+    ansible.builtin.lineinfile:
+      path: /opt/hadoop/etc/hadoop/hadoop-env.sh
+      regexp: '^# export HADOOP_CONF_DIR='
+      line: 'export HADOOP_CONF_DIR=${HADOOP_HOME}/etc/hadoop'
+      backrefs: yes
+  - name: add HADOOP_ROOT_LOGGER to hadoop_env.sh
+    ansible.builtin.lineinfile:
+      path: /opt/hadoop/etc/hadoop/hadoop-env.sh
+      regexp: '^# export HADOOP_ROOT_LOGGER=INFO,console$'
+      line: 'export HADOOP_ROOT_LOGGER=WARN,DRFA'
+      backrefs: yes
+  - name: add HADOOP_WARN_SUPPRESS to hadoop_env.sh
+    ansible.builtin.lineinfile:
+      dest: /opt/hadoop/etc/hadoop/hadoop-env.sh
+      line: 'export HADOOP_HOME_WARN_SUPPRESS=1'
+  - name: update UsePAM confing in /etc/ssh/sshd_config
+    ansible.builtin.lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^UsePAM yes$'
+      line: 'UsePAM no'
+      backrefs: yes
+  - name: add NOPASSWD sudo to /etc/sudoers
+    ansible.builtin.lineinfile:
+      dest: /etc/sudoers
+      line: '%sudo ALL=(ALL) NOPASSWD:ALL'
+  - name: create ssh config file for hadoop user
+    ansible.builtin.copy:
+      dest: /home/hadoop/.ssh/config
+      content: |
+        Host *
+          UserKnownHostsFile    /dev/null
+          LogLevel              quiet
+          StrictHostKeyChecking no
+      owner: hadoop
+      group: hadoop
+  - name: copy core-site.xml and back up old version
+    ansible.builtin.copy:
+      src: config/core-site.xml
+      dest: /opt/hadoop/etc/hadoop/core-site.xml
+      backup: yes
+  - name: copy hdfs-site.xml and back up old version
+    ansible.builtin.copy:
+      src: config/hdfs-site.xml
+      dest: /opt/hadoop/etc/hadoop/hdfs-site.xml
+      backup: yes
+  - name: copy mapred-site.xml and back up old version
+    ansible.builtin.copy:
+      src: config/mapred-site.xml
+      dest: /opt/hadoop/etc/hadoop/mapred-site.xml
+      backup: yes
+  - name: copy yarn-site.xml and back up old version
+    ansible.builtin.copy:
+      src: config/yarn-site.xml
+      dest: /opt/hadoop/etc/hadoop/yarn-site.xml
+      backup: yes
+  - name: copy master and back up old version
+    ansible.builtin.copy:
+      src: config/master
+      dest: /opt/hadoop/etc/hadoop/master
+      backup: yes
+  - name: copy workers and back up old version
+    ansible.builtin.copy:
+      src: config/workers
+      dest: /opt/hadoop/etc/hadoop/workers
+      backup: yes
+  - name: generate ssh keypair for hadoop user
+    community.crypto.openssh_keypair:
+      path: /home/hadoop/.ssh/id_rsa
+      owner: hadoop
+      group: hadoop
+  - name: Set authorized key in alternate location
+    ansible.posix.authorized_key:
+      user: hadoop
+      state: present
+      key: "{{ lookup('file', 'config/id_rsa.pub') }}"
+      path: /home/hadoop/.ssh/authorized_keys
+      manage_dir: false
+  - name: update JAVA_HOME in /home/hadoop/.bashrc
+    ansible.builtin.lineinfile:
+      dest: /home/hadoop/.bashrc
+      line: 'export JAVA_HOME=$(readlink -f /usr/bin/java | sed "s:/bin/java::")'
+  - name: update HADOOP_HOME in /home/hadoop/.bashrc
+    ansible.builtin.lineinfile:
+      dest: /home/hadoop/.bashrc
+      line: 'export HADOOP_HOME=/opt/hadoop'
+  - name: update SPARK_HOME in /home/hadoop/.bashrc
+    ansible.builtin.lineinfile:
+      dest: /home/hadoop/.bashrc
+      line: 'export SPARK_HOME=/opt/spark'
+  - name: add LD_LIBRARY_PATH to /home/hadoop/.bashrc
+    ansible.builtin.lineinfile:
+      dest: /home/hadoop/.bashrc
+      line: 'export LD_LIBRARY_PATH=/opt/hadoop/lib/native:$LD_LIBRARY_PATH'
+  - name: update PATH in /home/hadoop/.bashrc
+    ansible.builtin.lineinfile:
+      dest: /home/hadoop/.bashrc
+      line: 'export PATH="$PATH:$JAVA_HOME/bin:$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$SPARK_HOME/bin:$SPARK_HOME/sbin"'
+  - name: format the hdfs namenode command
+    ansible.builtin.shell:
+      cmd: /opt/hadoop/bin/hdfs namenode -format -force
+      executable: /bin/bash
+    become: true
+    become_user: hadoop
+  - name: start dfs service
+    ansible.builtin.shell:
+      cmd: nohup /opt/hadoop/sbin/start-dfs.sh
+    become: true
+    become_user: hadoop
+  - name: start yarn service
+    ansible.builtin.shell:
+      cmd: nohup /opt/hadoop/sbin/start-yarn.sh
+    become: true
+    become_user: hadoop
